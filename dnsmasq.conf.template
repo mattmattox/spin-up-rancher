@@ -1,0 +1,8 @@
+# Respond to all *.rancher.test with the provided IP address
+address=/rancher.test/{{RANCHER_TEST_IP}}
+
+# Listen on all interfaces
+listen-address=0.0.0.0
+
+# Do not use any other resolvers
+no-resolv

@@ -14,7 +14,7 @@ install_autok3s() {
 # Function to install KVM, QEMU, and required tools if not installed
 install_kvm_qemu() {
   # Check if KVM, QEMU, and libvirt are installed
-  if ! dpkg -l | grep -qw qemu-kvm || ! dpkg -l | grep -qw libvirt-daemon-system || ! dpkg -l | grep -qw virtinst; then
+  if ! virtctl version; then
     echo "KVM, QEMU, or required packages not found. Installing..."
     sudo apt-get update
     sudo apt-get install -y qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils virtinst
@@ -101,10 +101,17 @@ create_nat_network() {
   network_name="private-nat"
   network_xml="/tmp/${network_name}.xml"
 
+  if ! ip link show virbr1 > /dev/null 2>&1; then
+    echo "Creating virbr1 bridge..."
+    sudo brctl addbr virbr1
+    sudo ip addr add 192.168.100.1/24 dev virbr1
+    sudo ip link set dev virbr1 up
+  fi
+
   if virsh net-info "$network_name" > /dev/null 2>&1; then
     echo "Network $network_name already exists."
   else
-    echo "Creating new NAT network: $network_name..."
+    echo "Creating new NAT network: $network_name with DHCP..."
     cat > $network_xml <<EOF
 <network>
   <name>$network_name</name>
@@ -123,7 +130,6 @@ EOF
     echo "NAT network $network_name created and started."
   fi
 }
-
 # Function to create VMs using virt-install with cloud image
 create_vm() {
   vm_name=$1
@@ -249,9 +255,9 @@ ssh_key=$(cat ~/.ssh/id_rsa.pub)
 
 # Define VM configurations (you can add or modify these as needed)
 vm_configs=(
-  "rancher-vm1 4096 2 20"  # VM name, RAM (MB), CPU count, Disk size (GB)
-  "rancher-vm2 4096 2 20"
-  "rancher-vm3 4096 2 20"
+  "node-${name_version}-vm01 4096 2 20"  # VM name, RAM (MB), CPU count, Disk size (GB)
+  "node-${name_version}-vm02 4096 2 20"
+  "node-${name_version}-vm03 4096 2 20"
 )
 
 # Install KVM and QEMU if not present
@@ -329,22 +335,22 @@ if [ -z "$traefik_ip" ]; then
   exit 1
 fi
 
-# Set hostname to match the Rancher hostname format
-hostname="rancher-$name_version.rancher.test"
+# Use sslip.io for the Rancher hostname
+hostname="${traefik_ip}.sslip.io"
 
-echo "Adding Traefik IP ($traefik_ip) to /etc/hosts as $hostname..."
+echo "Using sslip.io hostname: $hostname"
 
 # Backup existing /etc/hosts file before making changes
 sudo cp /etc/hosts /etc/hosts.backup
 
-# Add the IP and custom domain to /etc/hosts (e.g., rancher-v2-9-2.rancher.test)
+# Add the IP and sslip.io domain to /etc/hosts (optional if you're using sslip.io)
 sudo sed -i "/$hostname/d" /etc/hosts
 echo "$traefik_ip $hostname" | sudo tee -a /etc/hosts
 
-echo "Traefik IP added to /etc/hosts: $traefik_ip $hostname"
+echo "sslip.io IP and hostname added to /etc/hosts: $traefik_ip $hostname"
 
-# Install Rancher using the provided version
-echo "Installing Rancher..."
+# Install Rancher using the provided version and sslip.io hostname
+echo "Installing Rancher with sslip.io hostname..."
 cat <<EOF | kubectl apply -f -
 apiVersion: helm.cattle.io/v1
 kind: HelmChart
@@ -355,7 +361,7 @@ spec:
   chart: rancher
   repo: https://releases.rancher.com/server-charts/latest
   set:
-    hostname: rancher-$name_version.rancher.test
+    hostname: $hostname
     bootstrapPassword: Passw0rd
     replicas: 1
   targetNamespace: cattle-system
@@ -370,3 +376,4 @@ show_vm_ips "${vm_names[@]}"
 
 # Final confirmation
 echo "Rancher $version installation complete on k3d cluster rancher-$name_version."
+echo "Rancher URL: https://$hostname"
